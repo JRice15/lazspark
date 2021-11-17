@@ -23,3 +23,16 @@ def laspy_to_np_pts(pts):
     return np.stack([pts.x, pts.y, pts.z], axis=-1)
 
 
+class FixedVersion(laspy.header.Version):
+    """fixes some strange bug in deepcopying Versions"""
+
+    def __deepcopy__(self, memo):
+        result = laspy.header.Version.from_str(str(self))
+        memo[id(self)] = result
+        return result
+
+def copy_header(header):
+    version = FixedVersion.from_str(str(header.version))
+    header = laspy.header.LasHeader(version=version, point_format=header.point_format)
+    return header
+

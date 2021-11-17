@@ -8,21 +8,9 @@ import numpy as np
 import pandas as pd
 import ilock
 
-from utils import BACKEND, COMPRESS, np_to_laspy_pts, laspy_to_np_pts
+from utils import BACKEND, COMPRESS, np_to_laspy_pts, laspy_to_np_pts, copy_header
 
-
-class FixedVersion(laspy.header.Version):
-    """fixes some strange bug in deepcopying Versions"""
-
-    def __deepcopy__(self, memo):
-        result = laspy.header.Version.from_str(str(self))
-        memo[id(self)] = result
-        return result
-
-def copy_header(header):
-    version = FixedVersion.from_str(str(header.version))
-    header = laspy.header.LasHeader(version=version, point_format=header.point_format)
-    return header
+DONE_FLAG = "-DONE-"
 
 
 def queue_writer(q, outfile, header, key):
@@ -34,19 +22,6 @@ def queue_writer(q, outfile, header, key):
                 return
             writer.write_points(pts)
 
-# def normal_writer(outfile, header, pts):
-#     header.version = FixedVersion.from_str(str(header.version))
-#     mode = "a" if os.path.exists(outfile) else "w"
-#     with laspy.open(outfile, mode, header=header, do_compress=COMPRESS, laz_backend=BACKEND) as writer:
-#         data = laspy.point.record.PackedPointRecord.zeros(len(pts), header.point_format)
-#         data.x = pts[:,0]
-#         data.y = pts[:,1]
-#         data.z = pts[:,2]
-#         if mode == "a":
-#             writer.append_points(data)
-#         else:
-#             writer.write_points(data)
-
 
 def locked_writer(outfile, header, pts):
     # reimporting laspy helps things
@@ -55,12 +30,12 @@ def locked_writer(outfile, header, pts):
             # appending
             with laspy.open(outfile, "a", do_compress=COMPRESS, laz_backend=BACKEND) as writer:
                 header = writer.header
-                pts = format_pts(pts, header.point_format)
+                pts = np_to_laspy_pts(pts, header.point_format)
                 writer.append_points(pts)
         else:
             # writing
             header = copy_header(header)
-            pts = format_pts(pts, header.point_format)
+            pts = np_to_laspy_pts(pts, header.point_format)
             with laspy.open(outfile, "w", header=header, do_compress=COMPRESS, laz_backend=BACKEND) as writer:
                 writer.write_points(pts)
 
