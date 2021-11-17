@@ -10,7 +10,7 @@ import psutil
 import time
 import os
 
-from utils import BACKEND, COMPRESS
+from utils import BACKEND, COMPRESS, timethis
 
 
 parser = argparse.ArgumentParser()
@@ -25,15 +25,13 @@ if os.path.exists(ARGS.outfile):
 # init globals
 sc = SparkContext.getOrCreate(SparkConf().setMaster("local[*]"))
 
-points_per_chunk = 1_000_000
 
-t1 = time.perf_counter()
-with laspy.open(ARGS.file, "r") as reader:
-    with laspy.open(ARGS.outfile, "w", header=reader.header, do_compress=BACKEND, laz_backend=BACKEND) as writer:
-        for pts in reader.chunk_iterator(points_per_chunk):
-            writer.write_points(pts)
+with timethis():
+    with laspy.open(ARGS.file, "r") as reader:
+        with laspy.open(ARGS.outfile, "w", header=reader.header, do_compress=BACKEND, laz_backend=BACKEND) as writer:
+            for pts in reader.chunk_iterator(ARGS.points_per_chunk):
+                writer.write_points(pts)
 
-print(time.perf_counter() - t1)
 
 with laspy.open(ARGS.outfile, "r") as reader:
     print("final npoints:", reader.header.point_count)
