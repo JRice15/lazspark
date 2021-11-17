@@ -12,28 +12,12 @@ import abc
 from utils import BACKEND, COMPRESS, np_to_laspy_pts, laspy_to_np_pts, copy_header, timethis
 
 DONE_FLAG = "-DONE-"
+NORESULT_FLAG = "-NO-RESULT-"
 
 
 """
 Building blocks
 """
-
-class Pipeline():
-
-    def __init__(self, *outputs):
-        self.outputs = outputs
-        if not all([isinstance(s, AbstractOutput) for s in self.outputs]):
-            raise TypeError("All end stages passed to the Pipeline must be instances of EndStage")
-
-    def iter_outputs(self):
-        for abstract_output in self.outputs:
-            print("Executing EndStage", abstract_output.operation)
-            yield abstract_output.evaluate()
-
-    def run_all(self):
-        for abstract_output in self.outputs:
-            print("Executing EndStage", abstract_output.operation)
-            abstract_output.evaluate()
 
 
 class Stage(abc.ABC):
@@ -41,10 +25,12 @@ class Stage(abc.ABC):
     base stage class. override `execute`, and optionally `update_header` and `__init__`
     """
 
-    def __call__(self, inpt):
-        if not isinstance(inpt, AbstractOutput):
-            raise TypeError("Can only link a Stage to the result of __call__ing another stage. For example, `r = Reader(...); w = Writer(...)(r)` fails. `r = Reader(...)(); w = Writer(...)(r)` succeeds")
-        return AbstractOutput(self, inpt)
+    _cached_result = NORESULT_FLAG
+
+    def __call__(self, *rdds):
+        if self._cached_result == NORESULT_FLAG:
+            self._cached_result = self.execute(*rdds)
+        return self._cached_result
 
     @abc.abstractmethod
     def execute(self, rdd):
@@ -59,12 +45,13 @@ class StartStage(Stage):
     stage that begins computation
     """
 
-    def __call__(self):
+    def __call__(self, *args):
         """
         returns
-            abstractoutput, header
+            rdd, header
         """
-        return AbstractOutput(self, None), self.header
+        rdd, header = super().__call__(*args)
+        return rdd, header
 
     @abc.abstractmethod
     def execute(self):
@@ -75,33 +62,13 @@ class EndStage(Stage):
     """
     stage that ends a computation, and cannot be further linked from
     """
-    ...
 
+    def __repr__(self):
+        return "{}".format(self.__class__.__name__)
 
-class AbstractOutput():
-    """
-    placeholder representing an operation applied to an input
-    """
-    
-    def __init__(self, operation: Stage, inpt: "AbstractOutput|None"):
-        self.operation = operation
-        self.input = inpt
-        self._cache = {}
-    
-    def evaluate(self):
-        if "result" in self._cache:
-            return self._cache["result"]
-        # start stages have no input
-        if isinstance(self.operation, StartStage):
-            assert self.input is None
-            result = self.operation.execute()
-        # get input, apply operation
-        else:
-            rdd = self.input.evaluate()
-            result = self.operation.execute(rdd)
-        # save to cache and return
-        self._cache["result"] = result
-        return result
+    def __call__(self, *rdds):
+        print("Executing EndStage", self)
+        return super().__call__(*rdds)
 
 
 
@@ -159,7 +126,7 @@ class Reader(StartStage):
                 pts = reader.read_points(points_per_chunk)
                 return laspy_to_np_pts(pts)
         rdd = rdd.map(lambda x: _shard_loader(x, filename, ppc))
-        return rdd
+        return rdd, self.header
 
 
 class Writer(EndStage):
@@ -201,7 +168,7 @@ class Writer(EndStage):
 class Collect(EndStage):
 
     def execute(self, rdd):
-        return rdd.take(5)
+        return rdd.collect()
 
 
 def queue_writer(q, outfile, header, key):
