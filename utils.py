@@ -6,7 +6,8 @@ import time
 import numpy as np
 import pandas as pd
 from contextlib import contextmanager
-
+import geopandas
+import pyproj
 
 
 BACKEND = laspy.compression.LazBackend.LazrsParallel
@@ -47,4 +48,11 @@ def copy_header(header):
 def pointcount(filename):
     with laspy.open(filename, "r") as reader:
         return reader.header.point_count
+
+def sample_points(filename, n=100):
+    with laspy.open(filename, "r") as reader:
+        pts = reader.read_points(n)
+        return laspy_to_np_pts(pts)
+
+
 

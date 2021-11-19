@@ -9,28 +9,49 @@ import pandas as pd
 import ilock
 import abc
 
-from utils import BACKEND, COMPRESS, np_to_laspy_pts, laspy_to_np_pts, copy_header, timethis
+import pyspark
+from pyspark import SparkConf
+from pyspark.context import SparkContext
 
-DONE_FLAG = "-DONE-"
-NORESULT_FLAG = "-NO-RESULT-"
+from utils import *
+
+CACHE_EMPTY_FLAG = "-NO-RESULT-"
 
 
 """
 Building blocks
 """
 
+def is_rdd(x):
+    return isinstance(x, pyspark.rdd.RDD)
 
 class Stage(abc.ABC):
     """
     base stage class. override `execute`, and optionally `update_header` and `__init__`
     """
 
-    _cached_result = NORESULT_FLAG
+    _cached_result = CACHE_EMPTY_FLAG
 
+    def __init__(self, name=None, **kwargs):
+        self.name = self.__class__.__name__ if name is None else name
+        if kwargs:
+            raise ValueError("Extra args: {}".format(kwargs))
+        self._save_vars_cache = {}
+
+    @abc.abstractmethod
     def __call__(self, *rdds):
-        if self._cached_result == NORESULT_FLAG:
-            self._cached_result = self.execute(*rdds)
-        return self._cached_result
+        ...
+
+    def __repr__(self):
+        return self.name
+
+    def _save_vars(self, *args, name=None):
+        if name is None:
+            raise TypeError("Must supply name to _save_vars")
+        self._save_vars_cache[name] = args
+
+    def _pop_vars(self, name):
+        return self._save_vars_cache.pop(name)
 
     @abc.abstractmethod
     def execute(self, rdd):
@@ -39,6 +60,17 @@ class Stage(abc.ABC):
         """
         ...
 
+
+
+class OpStage(Stage):
+
+    def __call__(self, *rdds):
+        if not all(is_rdd(x) for x in rdds):
+            raise ValueError(f"All inputs to {self.name} must be RDDs")
+        result = self.execute(*rdds)
+        if not is_rdd(result):
+            raise ValueError(f"{self.name} must return an RDD")
+        return result
 
 class StartStage(Stage):
     """
@@ -50,7 +82,9 @@ class StartStage(Stage):
         returns
             rdd, header
         """
-        rdd, header = super().__call__(*args)
+        rdd, header = self.execute(*args)
+        if not is_rdd(rdd):
+            raise ValueError(f"{self.name} must return an RDD")
         return rdd, header
 
     @abc.abstractmethod
@@ -63,54 +97,51 @@ class EndStage(Stage):
     stage that ends a computation, and cannot be further linked from
     """
 
-    def __repr__(self):
-        return "{}".format(self.__class__.__name__)
-
     def __call__(self, *rdds):
         print("Executing EndStage", self)
-        return super().__call__(*rdds)
+        if not all(is_rdd(x) for x in rdds):
+            raise ValueError(f"All inputs to {self.name} must be RDDs")
+        return self.execute(*rdds)
 
 
 
 
 """
-Concrete stages
+Beginning and End stages
 """
 
-
-class Lambda(Stage):
+class FakeReader(StartStage):
     """
-    stage that utilizes an arbitrary (stateless) function
-    the function must accept an RDD as the first argument, and may optionally accept
-    the `args` and `kwargs` provided following that
+    simulate a reader, but just use a predefined np.array as the source
     """
 
-    def __init__(self, f, args=None, kwargs=None):
-        self.f = f
-        self.args = () if args is None else args
-        self.kwargs = {} if kwargs is None else kwargs
-    
-    def execute(self, rdd):
-        f = self.f
-        args = self.args
-        kwargs = self.kwargs
-        return rdd.map(lambda x: f(x, *args, **kwargs))
+    def __init__(self, points_per_chunk, **kwargs):
+        super().__init__(**kwargs)
+        self.points_per_chunk = points_per_chunk
+        self.sc = SparkContext.getOrCreate(SparkConf().setMaster("local[*]"))
 
+
+    def execute(self, array):
+        ppc = self.points_per_chunk
+        shards = list(range(0, len(array), ppc))
+        rdd = self.sc.parallelize(shards)
+        def get_chunk(start):
+            return array[start:start+ppc]
+        return rdd.map(get_chunk), None
 
 
 class Reader(StartStage):
 
-    def __init__(self, filename, points_per_chunk):
+    def __init__(self, filename, points_per_chunk, **kwargs):
+        super().__init__(**kwargs)
         self.filename = filename
         self.points_per_chunk = points_per_chunk
         with laspy.open(self.filename, "r") as reader:
             self.total_pts = reader.header.point_count
             self.header = reader.header
-    
-        from pyspark import SparkConf
-        from pyspark.context import SparkContext
-        # get spark contenxt
+
         self.sc = SparkContext.getOrCreate(SparkConf().setMaster("local[*]"))
+
 
     def execute(self):
         # parallelize shards
@@ -131,7 +162,8 @@ class Reader(StartStage):
 
 class Writer(EndStage):
 
-    def __init__(self, outfile, header, overwrite=False):
+    def __init__(self, outfile, header, overwrite=False, **kwargs):
+        super().__init__(**kwargs)
         self.outfile = outfile
         self.header = header
         if os.path.exists(outfile):
@@ -168,36 +200,132 @@ class Writer(EndStage):
 class Collect(EndStage):
 
     def execute(self, rdd):
-        return rdd.collect()
+        arrays = rdd.collect()
+        return np.concatenate(arrays, axis=0)
 
 
-def queue_writer(q, outfile, header, key):
-    multiprocessing.current_process().authkey = key
-    with laspy.open(outfile, "w", header=header, do_compress=COMPRESS, laz_backend=BACKEND) as writer:
-        while True:
-            pts = q.get()
-            if pts == DONE_FLAG:
-                return
-            writer.write_points(pts)
+class Take(EndStage):
+
+    def __init__(self, n=2, **kwargs):
+        super().__init__(**kwargs)
+        self.n = n
+
+    def execute(self, rdd):
+        n = self.n
+        arrays = rdd.take(n)
+        return np.concatenate(arrays, axis=0)
 
 
 
-def locked_partition_writer(outfile, header, pts_iter):
-    # reimporting laspy helps things
-    import laspy
-    with ilock.ILock("jr-laz-output"):
-        if os.path.exists(outfile):
-            # appending
-            with laspy.open(outfile, "a", do_compress=COMPRESS, laz_backend=BACKEND) as writer:
-                header = writer.header
-                for pts in pts_iter:
-                    pts = np_to_laspy_pts(pts, header.point_format)
-                    writer.append_points(pts)
-        else:
-            # writing
-            header = copy_header(header)
-            with laspy.open(outfile, "w", header=header, do_compress=COMPRESS, laz_backend=BACKEND) as writer:
-                for pts in pts_iter:
-                    pts = np_to_laspy_pts(pts, header.point_format)
-                    writer.write_points(pts)
+"""
+intermediate operations
+"""
+
+
+class Lambda(OpStage):
+    """
+    stage that utilizes an arbitrary (stateless) function
+    the function must accept an RDD as the first argument, and may optionally accept
+    the `args` and `kwargs` provided following that
+    """
+
+    def __init__(self, f, f_args=None, f_kwargs=None, **kwargs):
+        super().__init__(**kwargs)
+        self.f = f
+        self.f_args = () if f_args is None else f_args
+        self.f_kwargs = {} if f_kwargs is None else f_kwargs
+    
+    def execute(self, rdd):
+        f = self.f
+        args = self.f_args
+        kwargs = self.f_kwargs
+        return rdd.map(lambda x: f(x, *args, **kwargs))
+
+
+class Reproject(OpStage):
+    """
+    reproject from coordinate system A to B
+    """
+
+    def __init__(self, from_crs, to_crs, **kwargs):
+        super().__init__(**kwargs)
+        self.from_crs = from_crs
+        self.to_crs = to_crs
+    
+    def execute(self, rdd):
+        def reproject(xyz, from_crs, to_crs):
+            """
+            transfrom coordinate reference system for an np.array of shape (n,3)
+            """
+            transformer = pyproj.Transformer.from_crs(from_crs, to_crs)
+            projected = transformer.transform(xyz[:,0], xyz[:,1], xyz[:,2])
+            return np.stack(projected, axis=-1)
+        from_crs = self.from_crs
+        to_crs = self.to_crs
+        return rdd.map(lambda x: reproject(x, from_crs, to_crs))
+
+
+class Decimate(OpStage):
+    """
+    keep every Nth point (subject to fewer points than expected when the N is 
+    a substantial fraction of the reader's points_per_chunk)
+    """
+
+    def __init__(self, n, **kwargs):
+        super().__init__(**kwargs)
+        self.n = n
+    
+    def execute(self, rdd):
+        n = self.n
+        return rdd.map(lambda x: x[::n])
+
+class Filter(OpStage):
+
+    def __init__(self, min_x=np.NINF, min_y=np.NINF, min_z=np.NINF, 
+            max_x=np.inf, max_y=np.inf, max_z=np.inf, **kwargs):
+        super().__init__(**kwargs)
+        self._save_vars(min_x, min_y, min_z, max_x, max_y, max_z, name="minmax")
+    
+    def execute(self, rdd):
+        min_x, min_y, min_z, max_x, max_y, max_z = self._pop_vars("minmax")
+        def filterer(pts):
+            return pts[
+                (pts[:,0] >= min_x) & \
+                (pts[:,0] <= max_x) & \
+                (pts[:,1] >= min_y) & \
+                (pts[:,1] <= max_y) & \
+                (pts[:,2] >= min_z) & \
+                (pts[:,2] <= max_z)
+            ]
+        return rdd.map(filterer)
+
+class Translate(OpStage):
+    """
+    move points by a constant factor in each dimension
+    """
+
+    def __init__(self, x=0, y=0, z=0, **kwargs):
+        super().__init__(**kwargs)
+        self._save_vars(x, y, z, name="xyz")
+    
+    def execute(self, rdd):
+        x, y, z = self._pop_vars("xyz")
+        def translate(pts):
+            return pts + np.array([x, y, z])
+        return rdd.map(translate)
+
+class Scale(OpStage):
+    """
+    scale points by a constant factor in each dimension
+    """
+
+    def __init__(self, x=1, y=1, z=1, **kwargs):
+        super().__init__(**kwargs)
+        self._save_vars(x, y, z, name="xyz")
+    
+    def execute(self, rdd):
+        x, y, z = self._pop_vars("xyz")
+        def scale(pts):
+            return pts * np.array([x, y, z])
+        return rdd.map(scale)
 
