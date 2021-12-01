@@ -2,6 +2,8 @@ import numpy as np
 import laspy
 import os, sys
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import stages
 from utils import *
 
@@ -68,6 +70,9 @@ def main():
     to_crs = "epsg:26911"
     outfile = ".temp_out.las"
     points_per_chunk = 10_000_000
+
+    if os.path.exists(outfile):
+        os.remove(outfile)
 
     t0 = time.perf_counter()
     run_simple(infile, outfile, points_per_chunk, from_crs, to_crs)
