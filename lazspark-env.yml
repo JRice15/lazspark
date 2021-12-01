@@ -2,7 +2,7 @@ name: lazspark
 channels:
   - conda-forge
   - defaults
-dependancies:
+dependencies:
   - gdal=3.2
   - geopandas=0.10.2
   - numpy=1.21
@@ -12,7 +12,7 @@ dependancies:
   - pyproj=3.1
   - pyspark=3.2
   - python=3.7.12
-  pip:
+  - pip:
     - ilock
     - laspy==2.0.3
     - laszip==0.1.0
