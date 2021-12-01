@@ -75,18 +75,18 @@ def main():
         os.remove(outfile)
 
     t0 = time.perf_counter()
-    run_simple(infile, outfile, points_per_chunk, from_crs, to_crs)
-    t1 = time.perf_counter()
-    pointcount_simple = pointcount(outfile)
-    os.remove(outfile)
-    t_simple = t1 - t0
-
-    t0 = time.perf_counter()
     run_parallel(infile, outfile, points_per_chunk, from_crs, to_crs)
     t1 = time.perf_counter()
     pointcount_parallel = pointcount(outfile)
     os.remove(outfile)
     t_parallel = t1 - t0
+
+    t0 = time.perf_counter()
+    run_simple(infile, outfile, points_per_chunk, from_crs, to_crs)
+    t1 = time.perf_counter()
+    pointcount_simple = pointcount(outfile)
+    os.remove(outfile)
+    t_simple = t1 - t0
 
     print("simple time:", t_simple, "pointcount:", pointcount_simple)
     print("parallel time:", t_parallel, "pointcount:", pointcount_parallel)
