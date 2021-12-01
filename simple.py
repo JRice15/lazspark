@@ -28,7 +28,7 @@ sc = SparkContext.getOrCreate(SparkConf().setMaster("local[*]"))
 
 with timethis():
     with laspy.open(ARGS.file, "r") as reader:
-        with laspy.open(ARGS.outfile, "w", header=reader.header, do_compress=BACKEND, laz_backend=BACKEND) as writer:
+        with laspy.open(ARGS.outfile, "w", header=reader.header, do_compress=COMPRESS, laz_backend=BACKEND) as writer:
             for pts in reader.chunk_iterator(ARGS.points_per_chunk):
                 writer.write_points(pts)
 
