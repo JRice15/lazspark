@@ -71,6 +71,9 @@ def main():
     outfile = ".temp_out.las"
     points_per_chunk = 10_000_000
 
+    inpt_pointcount = pointcount(infile)
+    print("Input pointcount:", inpt_pointcount)
+
     if os.path.exists(outfile):
         os.remove(outfile)
 
@@ -88,13 +91,13 @@ def main():
     os.remove(outfile)
     t_simple = t1 - t0
 
+    print("Input pointcount:", inpt_pointcount)
     print("simple time:", t_simple, "pointcount:", pointcount_simple)
     print("parallel time:", t_parallel, "pointcount:", pointcount_parallel)
     if t_parallel <= t_simple:
-        fmt = "{}x speedup"
+        print("{}x speedup".format(t_simple / t_parallel))
     else:
-        fmt = "{}x slowdown"
-    print(fmt.format(t_parallel / t_simple))
+        print("{}x slowdown".format(t_parallel / t_simple))
     if pointcount_parallel != pointcount_simple:
         print("Error: Pointcounts differ!")
 
