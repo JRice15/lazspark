@@ -9,8 +9,11 @@ from contextlib import contextmanager
 import geopandas
 import pyproj
 
-
-BACKEND = laspy.compression.LazBackend.LazrsParallel
+try:
+    import lazrs
+    BACKEND = laspy.compression.LazBackend.LazrsParallel
+except:
+    BACKEND = laspy.compression.LazBackend.Laszip
 COMPRESS = False
 
 @contextmanager
