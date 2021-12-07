@@ -27,8 +27,10 @@ def filterer(pts, min_x=np.NINF, min_y=np.NINF, min_z=np.NINF, max_x=np.inf, max
 def decimate(x, n):
     return x[::n]
 
-def reproject(xyz, from_crs, to_crs):
-    transformer = pyproj.Transformer.from_crs(from_crs, to_crs)
+def make_transformer(from_crs, to_crs):
+    return pyproj.Transformer.from_crs(from_crs, to_crs)
+
+def reproject(xyz, transformer):
     projected = transformer.transform(xyz[:,0], xyz[:,1], xyz[:,2])
     return np.stack(projected, axis=-1)
 
@@ -38,12 +40,13 @@ tests to run
 """
 
 def run_simple(infile, outfile, points_per_chunk, from_crs, to_crs):
+    transformer = make_transformer(from_crs, to_crs)
     with laspy.open(infile, "r") as reader:
         with laspy.open(outfile, "w", header=reader.header, do_compress=COMPRESS, laz_backend=BACKEND) as writer:
             for pts in reader.chunk_iterator(points_per_chunk):
                 pts = laspy_to_np_pts(pts)
 
-                pts = reproject(pts, from_crs, to_crs)
+                pts = reproject(pts, transformer)
                 pts = translate(pts, 2, 0.5, 2)
                 pts = filterer(pts, min_z=3)
                 pts = decimate(pts, 3)
