@@ -49,11 +49,11 @@ def copy_header(header):
     return header
 
 def pointcount(filename):
-    with laspy.open(filename, "r") as reader:
+    with laspy.open(filename, "r", laz_backend=BACKEND) as reader:
         return reader.header.point_count
 
 def sample_points(filename, n=100):
-    with laspy.open(filename, "r") as reader:
+    with laspy.open(filename, "r", laz_backend=BACKEND) as reader:
         pts = reader.read_points(n)
         return laspy_to_np_pts(pts)
 
