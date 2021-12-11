@@ -57,6 +57,8 @@ def run_simple(infile, outfile, points_per_chunk, from_crs, to_crs):
 
 
 def run_parallel(infile, outfile, points_per_chunk, from_crs, to_crs):
+
+    
     x, header = stages.Reader(infile, points_per_chunk)()
 
     x = stages.Reproject(from_crs, to_crs)(x)

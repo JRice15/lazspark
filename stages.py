@@ -1,3 +1,7 @@
+"""
+API interface
+"""
+
 import laspy
 
 import os, sys, re
@@ -63,6 +67,9 @@ class Stage(abc.ABC):
 
 
 class OpStage(Stage):
+    """
+    stages that operates on an RDD
+    """
 
     def __call__(self, *rdds):
         if not all(is_rdd(x) for x in rdds):
@@ -131,6 +138,10 @@ class FakeReader(StartStage):
 
 
 class Reader(StartStage):
+    """
+    Read `filename` in parallel, with `points_per_chunk` points read into each worker
+    target ppc: total_points / ppc == number of cores available
+    """
 
     def __init__(self, filename, points_per_chunk, **kwargs):
         super().__init__(**kwargs)
@@ -161,6 +172,12 @@ class Reader(StartStage):
 
 
 class Writer(EndStage):
+    """
+    Write points to `outfile`, with `header` (usually provided by the Reader at 
+    the start of the pipeline)
+    This stage is a bottleneck, because writing cannot be parallelized. This is
+    ensured by a global lock implemented in iLock.
+    """
 
     def __init__(self, outfile, header, overwrite=False, **kwargs):
         super().__init__(**kwargs)
@@ -198,6 +215,10 @@ class Writer(EndStage):
 
 
 class Collect(EndStage):
+    """
+    collect all chunks from this pipeline
+    WARNING: This may exhaust memory
+    """
 
     def execute(self, rdd):
         arrays = rdd.collect()
@@ -205,6 +226,9 @@ class Collect(EndStage):
 
 
 class Take(EndStage):
+    """
+    take the first N chunks from this pipeline
+    """
 
     def __init__(self, n=2, **kwargs):
         super().__init__(**kwargs)
@@ -219,14 +243,21 @@ class Take(EndStage):
 
 """
 intermediate operations
+
+For many of these, there is a strange design pattern in the execute() method,
+when we do something like `f = self.f`. Why not just pass self.f? Because
+inside rdd.map, any references used are serialized to the workers, so the
+`self` reference causes the stage to try and serialize its whole class, which
+we don't need to do at the very least, and usually fails as well
 """
 
 
 class Lambda(OpStage):
     """
     stage that utilizes an arbitrary (stateless) function
-    the function must accept an RDD as the first argument, and may optionally accept
-    the `args` and `kwargs` provided following that
+    the function must accept an RDD as the first argument.
+    If you want to supply additional arguments to `f`, pass them in  `f_args` 
+    and/or `f_kwargs`
     """
 
     def __init__(self, f, f_args=None, f_kwargs=None, **kwargs):
@@ -280,6 +311,10 @@ class Decimate(OpStage):
         return rdd.map(lambda x: x[::n])
 
 class Filter(OpStage):
+    """
+    filter points based on X, Y, and/or Z conditions. Conditions not given
+    will default to no filtering in that dimension and direction
+    """
 
     def __init__(self, min_x=np.NINF, min_y=np.NINF, min_z=np.NINF, 
             max_x=np.inf, max_y=np.inf, max_z=np.inf, **kwargs):

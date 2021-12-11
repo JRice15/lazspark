@@ -1,9 +1,14 @@
+"""
+This file defines a command-line interface to the program
+"""
+
 import abc
 import argparse
 import os
 import re
 import sys
 import time
+import inspect
 
 import ilock
 import laspy
@@ -22,9 +27,12 @@ def numberify(x):
 
 
 def run_spark_pipeline(ARGS):
-    x, header = stages.Reader(ARGS.file, ARGS.points_per_chunk)()
+    print("Stages:")
+    reader = stages.Reader(ARGS.file, ARGS.points_per_chunk)
+    print(" ", reader)
+    x, header = reader()
 
-    STAGE_MAP = {k.lower():v for k,v in vars(stages) if issubclass(v, stages.Stage) or isinstance(v, stages.Stage)}
+    STAGE_MAP = {k.lower():v for k,v in vars(stages).items() if inspect.isclass(v) and (issubclass(v, stages.Stage) or isinstance(v, stages.Stage))}
     for pipe in ARGS.pipeline:
         if "=" in pipe:
             pipe, args = pipe.split("=")
@@ -34,11 +42,12 @@ def run_spark_pipeline(ARGS):
         
         stage = STAGE_MAP[pipe.lower()]
         stage = stage(*args)
-        print(stage)
+        print(" ", stage)
         x = stage(x)
     
-    stages.Writer(ARGS.writer, header, overwrite=ARGS.overwrite)
-        
+    writer = stages.Writer(ARGS.outfile, header, overwrite=ARGS.overwrite)
+    print(" ", writer)
+    writer(x)
 
 
 
