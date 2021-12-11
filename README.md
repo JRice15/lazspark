@@ -56,8 +56,8 @@ This hopefully results in output like so:
 Stages:
   Reader
   Translate
-  Writer('out_pipeline.laz')
-Executing EndStage Writer('out_pipeline.laz')
+  Writer('b.laz')
+Executing EndStage Writer('b.laz')
 time: 6.285911347000001                                                         
 smaller.laz pointcount: 1056275
 out_pipeline.laz pointcount: 1056275
