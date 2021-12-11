@@ -59,6 +59,6 @@ Stages:
   Writer('b.laz')
 Executing EndStage Writer('b.laz')
 time: 6.285911347000001                                                         
-smaller.laz pointcount: 1056275
-out_pipeline.laz pointcount: 1056275
+a.laz pointcount: 1056275
+b.laz pointcount: 1056275
 ```
