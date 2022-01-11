@@ -35,6 +35,7 @@ class Stage(abc.ABC):
     """
 
     _cached_result = CACHE_EMPTY_FLAG
+    _check_output = True
 
     def __init__(self, name=None, **kwargs):
         self.name = self.__class__.__name__ if name is None else name
@@ -75,7 +76,7 @@ class OpStage(Stage):
         if not all(is_rdd(x) for x in rdds):
             raise ValueError(f"All inputs to {self.name} must be RDDs")
         result = self.execute(*rdds)
-        if not is_rdd(result):
+        if self._check_output and not is_rdd(result):
             raise ValueError(f"{self.name} must return an RDD")
         return result
 
@@ -90,7 +91,7 @@ class StartStage(Stage):
             rdd, header
         """
         rdd, header = self.execute(*args)
-        if not is_rdd(rdd):
+        if self._check_output and not is_rdd(rdd):
             raise ValueError(f"{self.name} must return an RDD")
         return rdd, header
 
@@ -106,7 +107,7 @@ class EndStage(Stage):
 
     def __call__(self, *rdds):
         print("Executing EndStage", self)
-        if not all(is_rdd(x) for x in rdds):
+        if self._check_output and not all(is_rdd(x) for x in rdds):
             raise ValueError(f"All inputs to {self.name} must be RDDs")
         return self.execute(*rdds)
 
@@ -255,7 +256,7 @@ we don't need to do at the very least, and usually fails as well
 class Lambda(OpStage):
     """
     stage that utilizes an arbitrary (stateless) function
-    the function must accept an RDD as the first argument.
+    the function must accept an np.array as the first argument.
     If you want to supply additional arguments to `f`, pass them in  `f_args` 
     and/or `f_kwargs`
     """
@@ -364,3 +365,41 @@ class Scale(OpStage):
             return pts * np.array([x, y, z])
         return rdd.map(scale)
 
+
+class Split(OpStage):
+    """
+    splits data into many rdds with user-defined function.
+    args:
+        f: function that accepts an np.array as the first argument, returns array of keys corresponding to each point
+        keys: list of possible keys f can return
+    returns:
+        dict: mapping each key to an rdd
+    If you want to supply additional arguments to `f`, pass them in  `f_args` 
+    and/or `f_kwargs`.
+    """
+
+    _check_output = False
+
+    def __init__(self, f, keys, f_args=None, f_kwargs=None, **kwargs):
+        super().__init__(**kwargs)
+        self.f = f
+        self.f_args = () if f_args is None else f_args
+        self.f_kwargs = {} if f_kwargs is None else f_kwargs
+        self.keys = keys
+    
+    def execute(self, rdd):
+        f = self.f
+        args = self.f_args
+        kwargs = self.f_kwargs
+        keyed_rdd = rdd.map(lambda x: (x, f(x, *args, **kwargs)))
+
+        def np_filter(arr, key_arr, target_key):
+            cond = (key_arr == target_key)
+            print(target_key)
+            return arr[cond]
+        def map_it(key):
+            """this little function is required so that the value of 'key' is not cached after the first loop iteration"""
+            return keyed_rdd.map(lambda x: np_filter(x[0], x[1], key))
+
+        rdds = {k:map_it(k) for k in self.keys}
+        return rdds
