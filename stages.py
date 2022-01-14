@@ -107,7 +107,7 @@ class EndStage(Stage):
 
     def __call__(self, *rdds):
         print("Executing EndStage", self)
-        if self._check_output and not all(is_rdd(x) for x in rdds):
+        if not all(is_rdd(x) for x in rdds):
             raise ValueError(f"All inputs to {self.name} must be RDDs")
         return self.execute(*rdds)
 
@@ -395,7 +395,6 @@ class Split(OpStage):
 
         def np_filter(arr, key_arr, target_key):
             cond = (key_arr == target_key)
-            print(target_key)
             return arr[cond]
         def map_it(key):
             """this little function is required so that the value of 'key' is not cached after the first loop iteration"""
